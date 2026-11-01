@@ -1,0 +1,2 @@
+# Recommendation requirements
+Inputs: MovieLens user, movie, rating, and timestamp fields; CineMatch ratings mapped to MovieLens IDs; movie genre metadata. Ratings must be finite and within 0.5–5. Output is at most ten unseen MovieLens IDs with computed score and method reason. Models use cosine similarity on sparse user-item data. Evaluation uses a held-out split and reports RMSE/MAE; ranking metrics require an explicit relevance threshold before production claims.

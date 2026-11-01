@@ -1,0 +1,2 @@
+# Problem statement
+CineMatch helps people discover films that suit their interests by learning from explicit ratings, genre preferences, and community rating patterns. The system receives MovieLens movie and rating records plus CineMatch user ratings and returns ranked, unrated titles. It seeks useful discovery while respecting known user preferences, excluding already rated items, and making cold-start recommendations from observed dataset popularity rather than fabricated scores.

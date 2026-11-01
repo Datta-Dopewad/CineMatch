@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: cinematch-ml
+    runtime: python
+    plan: free
+    rootDir: ml-service
+    buildCommand: pip install -r requirements.txt && python -m dataset.dataset_downloader
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ML_SERVICE_TOKEN
+        generateValue: true
+
+  - type: web
+    name: cinematch-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci --prefix server
+    startCommand: cd server && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ML_SERVICE_URL
+        fromService:
+          type: web
+          name: cinematch-ml
+          property: hostport
+      - key: ML_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: cinematch-ml
+          envVarKey: ML_SERVICE_TOKEN

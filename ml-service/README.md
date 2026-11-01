@@ -1,0 +1,2 @@
+# CineMatch ML service
+From this directory run `python -m pip install -r requirements.txt`, then `python -m dataset.dataset_downloader` (optional; first data call downloads automatically), then `uvicorn main:app --reload --port 8000`. Set `ML_SERVICE_TOKEN` to match the Node API. The dataset is downloaded once unless removed or manually updated. This service uses MovieLens data and local metadata only.

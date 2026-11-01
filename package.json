@@ -1,0 +1,7 @@
+{
+  "name": "cinematch",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {"dev": "concurrently -k -n api,web \"npm:dev:server\" \"npm:dev:client\"", "dev:server": "npm --prefix server run dev", "dev:client": "npm --prefix client run dev", "start": "npm --prefix server start", "build": "npm --prefix client run build", "sync:movielens": "npm --prefix server run sync:movielens"},
+  "devDependencies": {"concurrently": "^9.1.2"}
+}
