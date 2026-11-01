@@ -20,7 +20,48 @@ app.post('/api/ratings',auth,rate);app.put('/api/ratings/:movieId',auth,async(re
 app.delete('/api/ratings/:movieId',auth,async(req,res)=>{const m=await resolveMovie(req.params.movieId);if(m)await Rating.deleteOne({userId:req.user.id,movieId:m._id});res.json({message:'Rating removed.'})});app.get('/api/ratings/user',auth,async(req,res)=>res.json({ratings:await Rating.find({userId:req.user.id}).populate('movieId').sort({updatedAt:-1})}));
 app.post('/api/watchlist',auth,async(req,res)=>{const m=await resolveMovie(req.body.movieId);if(!m)return res.status(404).json({message:'Movie not found.'});await Watch.updateOne({userId:req.user.id,movieId:m._id},{$setOnInsert:{userId:req.user.id,movieId:m._id}},{upsert:true});res.json({message:'Added to watchlist.'})});app.get('/api/watchlist',auth,async(req,res)=>res.json({watchlist:await Watch.find({userId:req.user.id}).populate('movieId').sort({createdAt:-1})}));app.put('/api/watchlist/:movieId/watched',auth,async(req,res)=>{const m=await resolveMovie(req.params.movieId);if(!m)return res.status(404).json({message:'Movie not found.'});await Watch.updateOne({userId:req.user.id,movieId:m._id},{$set:{watched:true},$setOnInsert:{userId:req.user.id,movieId:m._id}},{upsert:true});await History.create({userId:req.user.id,movieId:m._id});res.json({message:'Marked as watched.'})});app.delete('/api/watchlist/:movieId',auth,async(req,res)=>{const m=await resolveMovie(req.params.movieId);if(m)await Watch.deleteOne({userId:req.user.id,movieId:m._id});res.json({message:'Removed from watchlist.'})});
 app.post('/api/history',auth,async(req,res)=>{const m=await resolveMovie(req.body.movieId);if(!m)return res.status(404).json({message:'Movie not found.'});await History.create({userId:req.user.id,movieId:m._id});res.json({message:'Viewing recorded.'})});app.get('/api/history',auth,async(req,res)=>res.json({history:await History.find({userId:req.user.id}).populate('movieId').sort({viewedAt:-1}).limit(50)}));
-app.get('/api/recommendations',auth,async(req,res)=>{try{const[own,account]=await Promise.all([Rating.find({userId:req.user.id}).populate({path:'movieId',select:'movieLensId'}),User.findById(req.user.id).select('favoriteGenres')]);const userRatings=own.filter(x=>x.movieId?.movieLensId).map(x=>({movieId:x.movieId.movieLensId,rating:x.rating}));const mlHost=process.env.ML_SERVICE_URL;if(!mlHost)throw Error('ML service URL is not configured');const mlBase=/^https?:\/\//i.test(mlHost)?mlHost:`http://${mlHost}`;const r=await fetch(`${mlBase.replace(/\/$/,'')}/recommendations/user/${req.user.id}`,{method:'POST',headers:{'Content-Type':'application/json','X-Service-Token':process.env.ML_SERVICE_TOKEN},body:JSON.stringify({ratings:userRatings,favoriteGenres:account?.favoriteGenres||[]}),signal:AbortSignal.timeout(60000)});if(!r.ok)throw Error();const data=await r.json();const movies=await Movie.find({movieLensId:{$in:data.recommendations.map(x=>x.movie_id)}});res.json({recommendations:movies.map(m=>({...m.toObject(),recommendationScore:data.recommendations.find(x=>x.movie_id===m.movieLensId)?.score}))})}catch{res.status(503).json({message:'Personal recommendations are temporarily unavailable. Rate movies to build your taste profile.'})}});
+app.get('/api/recommendations',auth,async(req,res)=>{
+  let ratedMovieLensIds=[];
+  try{
+    const[own,account]=await Promise.all([
+      Rating.find({userId:req.user.id}).populate({path:'movieId',select:'movieLensId'}),
+      User.findById(req.user.id).select('favoriteGenres')
+    ]);
+    ratedMovieLensIds=own.map(x=>x.movieId?.movieLensId).filter(Number.isFinite);
+    const userRatings=own.filter(x=>x.movieId?.movieLensId).map(x=>({movieId:x.movieId.movieLensId,rating:x.rating}));
+    const mlHost=process.env.ML_SERVICE_URL;
+    if(!mlHost)throw Error('ML service URL is not configured');
+    const mlBase=/^https?:\/\//i.test(mlHost)?mlHost:`http://${mlHost}`;
+    const r=await fetch(`${mlBase.replace(/\/$/,'')}/recommendations/user/${req.user.id}`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Service-Token':process.env.ML_SERVICE_TOKEN},
+      body:JSON.stringify({ratings:userRatings,favoriteGenres:account?.favoriteGenres||[]}),
+      signal:AbortSignal.timeout(60000)
+    });
+    if(!r.ok)throw Error(`ML service returned HTTP ${r.status}`);
+    const data=await r.json();
+    const ranked=Array.isArray(data.recommendations)?data.recommendations:[];
+    const ids=ranked.map(x=>x.movie_id).filter(Number.isFinite);
+    const docs=await Movie.find({movieLensId:{$in:ids}});
+    const byId=new Map(docs.map(movie=>[movie.movieLensId,movie]));
+    const recommendations=ids.map(id=>{
+      const movie=byId.get(id);
+      const score=ranked.find(x=>x.movie_id===id)?.score;
+      return movie?{...movie.toObject(),recommendationScore:score}:null;
+    }).filter(Boolean);
+    if(recommendations.length)return res.json({recommendations});
+    throw Error('ML service returned no matching catalog movies');
+  }catch(error){
+    console.error('Personal recommendations request failed:',error.message);
+    try{
+      const fallback=await Movie.find({movieLensId:{$nin:ratedMovieLensIds}}).sort({popularity:-1,averageRating:-1}).limit(10);
+      if(fallback.length)return res.json({recommendations:fallback});
+    }catch(fallbackError){
+      console.error('Popular movie fallback failed:',fallbackError.message);
+    }
+    res.status(503).json({message:'Recommendations are temporarily unavailable. Please try again shortly.'});
+  }
+});
 app.get('/api/recommendations/similar/:movieId',async(req,res)=>{const movie=await resolveMovie(req.params.movieId);if(!movie)return res.status(404).json({message:'Movie not found.'});const sims=await Movie.find({_id:{$ne:movie._id},genres:{$in:movie.genres}}).sort({averageRating:-1}).limit(10);res.json({movies:sims})});app.get('/api/recommendations/because-you-watched/:movieId',auth,async(req,res)=>{const m=await resolveMovie(req.params.movieId);if(!m)return res.status(404).json({message:'Movie not found.'});res.json({movies:await Movie.find({_id:{$ne:m._id},genres:{$in:m.genres}}).sort({averageRating:-1}).limit(10)})});
 app.get('/api/users/profile',auth,async(req,res)=>{const user=await User.findById(req.user.id).select('-password');const[ratings,watched,watchlist]=await Promise.all([Rating.countDocuments({userId:user.id}),Watch.countDocuments({userId:user.id,watched:true}),Watch.countDocuments({userId:user.id})]);res.json({user,stats:{ratings,watched,watchlist}})});app.put('/api/users/profile',auth,async(req,res)=>{const patch={};if(typeof req.body.name==='string')patch.name=req.body.name.trim().slice(0,80);if(Array.isArray(req.body.favoriteGenres))patch.favoriteGenres=req.body.favoriteGenres.map(String).slice(0,20);const user=await User.findByIdAndUpdate(req.user.id,{$set:patch},{new:true}).select('-password');res.json({user})});
 app.get('/api/admin/dashboard',auth,admin,async(_,res)=>{const[users,movies,ratings,watchlists,popular]=await Promise.all([User.countDocuments(),Movie.countDocuments(),Rating.countDocuments(),Watch.countDocuments(),Movie.find().sort({ratingCount:-1}).limit(10).select('title ratingCount averageRating')]);res.json({users,movies,ratings,watchlists,popular})});app.get('/api/admin/users',auth,admin,async(_,res)=>res.json({users:await User.find().select('name email role createdAt').limit(500)}));app.get('/api/admin/statistics',auth,admin,async(_,res)=>res.json({movies:await Movie.countDocuments(),ratings:await Rating.countDocuments(),users:await User.countDocuments()}));
